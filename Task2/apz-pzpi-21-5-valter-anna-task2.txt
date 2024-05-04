@@ -1,0 +1,474 @@
+1 ОПИС АРХІТЕКТУРИ СИСТЕМИ
+
+Архітектура системи MediSync ґрунтується на чотирьохрівневій архітектурі та принципах Domain Driven Design. 
+MediSync.Presentation рівень, що відповідає за представлення користувацького інтерфейсу та взаємодію з користувачем. Тут знаходяться контролери, які обробляють HTTP запити та відповідають на них згідно з логікою додатку. Вони отримують запити від клієнтів, передають їх на обробку відповідним сервісам з рівня додатку (MediSync.Application), та повертають результати назад клієнтам. ExceptionMiddleware на цьому рівні відповідає за обробку винятків, що виникають в процесі обробки запитів. На цьому ж рівні відбувається налаштування для перевірки JWT токенів та визначення політик доступу.
+У MediSync.Application зосереджено на реалізації бізнес-логіки додатку, використовуючи підходи CQRS (Command Query Responsibility Segregation) та Mediator Pattern для управління запитами та командами.
+На рівні MediSync.Domain розташовані моделі даних, які представляють сутності домену додатку. Вони відображають структуру та взаємозв'язки між об'єктами в реальному світі, що використовуються в додатку. 
+У MediSync.Infrastructure рівень реалізації доступу до даних через Entity Framework Core. Тут також реалізовані сервіси, що відповідають за обробку паролів та генерацію JWT-токенів. Крім того, в MediSync.Infrastructure є реалізації репозиторіїв для кожної сутності. Ці репозиторії використовуються для взаємодії з базою даних через контекст, забезпечуючи операції створення, читання, оновлення та видалення даних. Нарешті, в MediSync.Infrastructure також реалізовано SignalR хаб NotificationHub, який надає можливість відправки повідомлень у реальному часі між клієнтами додатку.
+
+2 ПОБУДОВА ДІАГРАМИ РОЗГОРТАННЯ
+
+Система буде складатися з серверної частини, веб додатку, мобільного додатку та розумного пристрою. Компоненти системи відображені на діаграмі розгортання (див. рис. 1).
+
+3 ОПИС АРХІТЕКТУРИ СЕРВЕРНОЇ ЧАСТИНИ
+
+3.1 Створення бази даних та робота з даними
+	Для створення бази даних системи було обрано підхід Entity Framework «Code First», коли база даних створюється автоматично на основі класів, які описані у коді. У шарі моделі даних була створена папка «Entities», де описані сутності бази даних.
+Приклад класу, на основі якого було створено таблицю «Users»:
+1. namespace Domain.Entities;
+2. 
+3. public class User : BaseEntity
+4. {
+5.     public string? Name { get; set; }
+6. 
+7.     public string? Surname { get; set; }
+8. 
+9.     public int? Age { get; set; }
+10. 
+11.     public string Email { get; set; }
+12. 
+13.     public string Role { get; set; }
+14. 
+15.     public string? PasswordHash { get; set; }
+16. 
+17.     public string? PasswordSalt { get; set; }
+18. }
+Для налаштування та роботи з базою даних було використано Entity Framework. У проекті MediSync була використана система управління базами даних PostgreSQL. 
+Після налаштування бази даних я реалізувала патерн проектування «Репозиторій», що використовується для ізоляції бізнес-логіки від способу збереження та отримання даних. 
+Спочатку були створені інтерфейси, які визначають методи, що будть реалізовані у відповідному класі репозиторію. Приклад інтерфейсу «IDispenserRepository»:
+1. using Application.Dispensers.Commands.CreateDispenser;
+2. using Application.Dispensers.Commands.DeleteDispenser;
+3. using Application.Dispensers.Commands.UpdateDispenser;
+4.using Application.Dispensers.
+  Commands.UpdateDispenserTempereture;
+5. using Application.Dispensers.Queries.GetDispensers;
+6. using Domain.Entities;
+7. 
+8. namespace Application.Interfaces;
+9. 
+10. public interface IDispenserRepository : IRepository<Dispenser>
+11. {
+12. 		Task<int> CreateDispenser(CreateDispenserCommand request,       CancellationToken cancellationToken);
+13. 
+14.     Task<int> DeleteDispenser(DeleteDispenserCommand request, CancellationToken cancellationToken);
+15. 
+16.     Task UpdateLocation(UpdateDispenserLocationCommand request, CancellationToken cancellationToken);
+17. 
+18.           Task UpdateTemperature(UpdateDispenserTemperetureCommand request, CancellationToken cancellationToken);
+19. 
+20.     Task<List<Dispenser>> GetAllAsync(GetDispensersQuery request, CancellationToken cancellationToken);
+21. }
+Фактичні деталі реалізації інтерфейсу «IDispenserRepository» знаходяться у класі інтерфейсу «DispenserRepository» (додаток Б).  Інтерфейси репозиторіїв та класи їх реалізації були створені для кожного класу, який реалізує таблицю бази даних.
+3.2 Використання CQRS, MediatR та контролерів
+Для реалізації патерна CQRS (Command Query Responsibility Segregation) і управління запитами та командами використовувався пакет MediatR, який надає простий та ефективний спосіб обробки запитів та команд у додатку. У шарі додатків були створені класи запитів та команд, що відповідають за представлення оброблюваних запитів та команд системи.
+Наприклад, для роботи з дозуючими пристроями були створені класи запитів та команд:
+1. using MediatR;
+ 2. 
+ 3. namespace Application.Dispensers.Commands.CreateDispenser
+ 4. {
+ 5.     public record CreateDispenserCommand : IRequest<int>
+ 6.     {
+ 7.         public string DispensorName { get; set; }
+ 8. 
+ 9.         public string Location { get; set; }
+10.     }
+11. }
+1. using MediatR;
+ 2. 
+ 3. namespace Application.Dispensers.Queries.GetDispensers
+ 4. {
+ 5.     public record GetDispensersQuery : IRequest<List<DispenserResponse>>
+ 6.     {
+ 7.         public string? TemperatureUnit { get; set; } = String.Empty;
+ 8.     }
+ 9. }
+Далі були створені хендлери, що відповідають за обробку конкретних запитів або команд, які надходять до додатку. Вони реалізують логіку взаємодії з даними або виконання бізнес-логіки, пов'язаної з цими запитами та командами. 
+	Клас хендлерів, створених для обробки запитів і команд для роботи з дозуючими пристроями можна знайти у додатку В.
+Контролери були створені для кожного сутності та відповідали за обробку HTTP-запитів, передачу їх до відповідних обробників запитів та команд, а також повернення результатів клієнту. Наприклад, контролер для роботи з дозуючими пристроями має наступний вигляд:
+1. using Application.Dispensers.Commands.CreateDispenser;
+ 2. using Application.Dispensers.Commands.DeleteDispenser;
+ 3. using Application.Dispensers.Commands.UpdateDispenser;
+ 4. using Application.Dispensers.Queries.GetDispensers;
+ 5. using MediatR;
+ 6. using Microsoft.AspNetCore.Mvc;
+ 7. 
+ 8. namespace Presentation.Controllers
+ 9. {
+10.     [Route("api/[controller]")]
+11.     [ApiController]
+12.     public class DispenserController : ControllerBase
+13.     {
+14.         private readonly IMediator _mediator;
+15. 
+16.         public DispenserController(IMediator mediator)
+17.         {
+18.             _mediator = mediator;
+19.         }
+20. 
+21.         [Authorize(Roles = "admin")]
+22.         [HttpPost]
+23.         public async Task<IActionResult> AddDispenser([FromBody] CreateDispenserCommand request, CancellationToken cancellationToken)
+24.         {
+25.             var response = await _mediator.Send(request, cancellationToken);
+26.             return Ok(response);
+27.         }
+28. 
+29.         [Authorize(Roles = "admin")]
+30.         [HttpDelete("{id}")]
+31.         public async Task<IActionResult> DeleteDispenser(int id, CancellationToken cancellationToken)
+32.         {
+33.             var response = await _mediator.Send(new DeleteDispenserCommand { Id = id }, cancellationToken);
+34.             return Ok(response);
+35.         }
+36. 
+37.         [Authorize(Roles = "admin")]
+38.         [HttpGet]
+39.         public async Task<IActionResult> GetAllDispensers([FromQuery] string? temperatureUnit, CancellationToken cancellationToken)
+40.         {
+41.             if (temperatureUnit != "C" && temperatureUnit != "F")
+42.             {
+43.                 return BadRequest("Invalid temperature unit. Please specify 'C' or 'F'.");
+44.             }
+45. 
+46.             var response = await _mediator.Send(new GetDispensersQuery { TemperatureUnit = temperatureUnit}, cancellationToken);
+47.             return Ok(response);
+48.         }
+49. 
+50. 
+51.		[Authorize(Roles = "admin")]
+52.         [HttpPut]
+53.         public async Task<IActionResult> UpdateLocation([FromBody] UpdateDispenserLocationCommand request, CancellationToken cancellationToken)
+54.         {
+55.             var response = await _mediator.Send(request, cancellationToken);
+56.             return Ok(response);
+57.         }
+58.     }
+59. }
+3.3 Обробка помилок
+Перед тим, як потрапити до контролера запити обробляються ExceptionMiddleware (додаток Г). Цей Middleware перехоплює винятки, які можуть виникнути в процесі обробки HTTP-запитів, записує їх в журнал і відправляє клієнту відповідь у форматі JSON з відповідним статусом та інформацією про помилку.
+3.4 Бізнес логіка
+В бізнес логіці додатку використовується широкий спектр функціональності для обробки даних користувачів. Одним з ключових є використання валідаторів FluentValidation для перевірки коректності вхідних даних перед їх обробкою. Приклад відідації, що відбувається перед створенням нового дозуючого пристрою:
+1. using FluentValidation;
+ 2. 
+ 3. namespace Application.Dispensers.Commands.CreateDispenser
+ 4. {
+ 5.     public class CreateDispenserCommandValidator : AbstractValidator<CreateDispenserCommand>
+ 6.     {
+ 7.         public CreateDispenserCommandValidator()
+ 8.         {
+ 9.             RuleFor(x => x.DispensorName)
+10.                 .NotEmpty().WithMessage("Dispenser name is required.")
+11.                 .MaximumLength(100).WithMessage("Dispenser name cannot be longer than 100 characters.");
+12. 
+13.             RuleFor(x => x.Location)
+14.                 .NotEmpty().WithMessage("Location is required.");
+15.         }
+16.     }
+17. }
+   	Основним методом бізнес логіки системи є додавання лікарями призначень для пацієнтів, де зазначається інформація про тип медичного засобу його дозу, частоту прийому та період прийому медикаментів.
+Серед методів бізнес логіки також можна виділити прийняття ліків. Для коректного прийняття ліків використовуються дані про рецепт, доступність препаратів у дозуючому пристрої та перевіряють кількість вже отриманих ліків для забезпечення безпеки, ефективності лікування та попередження прийому надмірної дози медичних засобів.
+Для лікарів є можливість отримання статистики щодо прийому медикаментів пацієнтом. Такий аналіз здійснюється шляхом перевірки транзакцій та рецептів. Це дозволяє визначити кількість прийнятих та пропущених доз.
+Для пацієнтів є можливість розрахувати прогрес прийому медичного засобу за призначенням у процентах для підвищення інтерактивності роботи та лікування.
+У якості математичного метода обробки даних з розумного пристрою хочу навести обчислення одиниці виміру температури, що здійснюється на основі вхідного параметру TemperatureUnit, який вказує одиниці виміру температури (Фаренгейта або Цельсія). Це дозволяє користувачеві отримувати температурні показники у відповідній одиниці виміру.
+3.5 Можливість адміністрування системи
+	Адміністраторам системи надається широкий спектр можливостей адміністрування системи. Насамперед керування користувачами, включаючи їхнє створення, видалення, перегляд та зміну ролей. Крім того, доступні інструменти для імпорту та експорту користувачів, що спрощує управління та забезпечує зручність у роботі з даними. Також адміністратори мають можливості для управління інформацією про дозуючі пристрої. Вони можуть додавати нові дозуючі пристрої, видаляти чи оновлювати інформацію про існуючі. Також система надає можливість адміністраторам додавати, видаляти та оновлювати інформацію про медикаменти. Крім того, адміністратори можуть керувати наявністю конкретних медикаментів у конкретних дозуючих пристроях. 
+3.6 Локалізація
+У системі використовуються ресурси для локалізації помилок, щоб забезпечити їхнє відображення у відповідній мові для користувача.
+Файли ресурсів (.resx) використовуються для зберігання текстових ресурсів у різних мовах. У цій системі підтримуються англійська мова як мова за замовченням та українська мову. Для кожної мови створено відповідний файл ресурсів з текстовими рядками для помилок.
+Наприклад, є клас помилки DailyDoseAlreadyTakenException, що виникає, якщо пацієнт вже отримав денну дозу медичного засобу. Ввикористовується ресурс для повідомлення про помилку у відповідній мові. При створенні екземпляра класу помилки вказується текст помилки, який отримується з відповідного файлу ресурсів для поточної мови:
+1. using Domain.Resources;
+ 2. 
+ 3. namespace Domain.Exceptions
+ 4. {
+ 5.     public class DailyDoseAlreadyTakenException : Exception
+ 6.     {
+ 7.         public DailyDoseAlreadyTakenException(): base(Resource.DailyDoseAlreadyTakenException) { }
+ 8.     }
+ 9. }
+Коли ця помилка буде викинута, користувач отримає повідомлення про помилку у відповідній мові, яка була вибрана в системі.
+3.7 Інтернаціоналізація
+Інтернаціоналізація системі проявляється у забезпеченні підтримки різних одиниць виміру температури для користувачів з різних країн та регіонів. Використання двох одиниць виміру, таких як Celsius (C) та Fahrenheit (F), дозволяє користувачам обирати те, що є для них звичайним та зрозумілим.
+У нашому випадку, інтернаціоналізація охоплює можливість вибору одиниці виміру температури через параметри запиту. Користувачі можуть вибрати бажану одиницю виміру, і система автоматично перетворить значення температури відповідно до обраної одиниці виміру.
+3.8 Облік часу
+	У системі облік часу проводиться за стандартом часу UTC (Coordinated Universal Time) як у базі даних, так і на сервері. Це дозволяє уникнути проблем, пов'язаних з різницею у часових зонах та переходом на літні та зимові часи. Обробка відповідно часових зон відбувається на рівні клієнтського застосунку, де можна налаштувати відображення часу відповідно до місцевого часу користувача. Це дозволяє забезпечити коректне відображення часу для користувачів з різних регіонів.
+3.9 Захист даних
+Для забезпечення безпеки даних використовується протокол HTTPS для шифрування комунікації між клієнтом та сервером. Крім того, паролі користувачів зберігаються у хешованому вигляді разом із випадково згенерованим salt. Для автентифікації та авторизації користувачів використовуються JWT (JSON Web Token), що дозволяє безпечно передавати дані про автентифікацію між клієнтом та сервером і зберігати інформацію про сесію на бекенді, що підвищує безпеку та зручність управління сесіями. 
+
+4 ПОБУДОВА ДІАГРАМИ ПРЕЦЕДЕНТІВ
+
+Функціонал, який був відзначений у документі Vision & Scope для розробки серверної частини системи, був узагальнений та представлений у вигляді діаграми прецидентів (див. рис. 2). У системі існує три актори: адміністратор, пацієнт та лікар.   
+
+5 ПОБУДОВА ER-ДІАГРАМИ
+
+Після аналізу системи було створено ER діаграму бази даних (див. рис. 3).
+База даних містить шість таблиць: користувачі («Users»), медичні засоби («Medicines»), призначення медичних засобів пацієнтам («Prescriptions»), записи про прийом медичних засобів пацієнтами («Transactions»), дозуючі пристрої («Dispensers») та інформація про кількість медичних засобів, що зберігаються у дозуючих пристроях («MedicineStocks»). Кожна таблиця має свій власний унікальний ідентифікатор в якості первинного ключа. Таблиці «Prescriptions» та «MedicineStocks» є таблицями для реалізації відношення багато-до-багатьох.
+
+6 СПЕЦИФІКАЦІЯ REST
+
+REST API містить 25 ендпоїнів, що дозволяють різним частинам системи взаємодіяти між собою. 
+Специфікація REST API та опис кожного ендпоїнту наведений у таблиці 1. 
+Рівні доступу:
+− авторизований користувач (admin)
+− системний адміністратор (patient);
+− адміністратор даних (doctor).
+
+7 ПОБУДОВА ДІАГРАМИ КОМПОНЕНТІВ
+
+На рисунку 4 наведена діаграма компонентів, яка ілюструє залежності між пакетами та шарами архітектури.
+
+ВИСНОВКИ
+
+Під час виконання цієї лабораторної роботи була розроблена серверна частина проекту. Були створені діаграми діаграмах розгортання (Deployment Diagram), прецедентів (Use Case Diagram), ER-модель даних (Entity–Relationship Model) та UML діаграмі пакетів (Package Diagram). Було спроектовано та розроблено БД. Було розроблено та наведено таблицю специфікації REST API. 
+Посилання на репозиторій проекту: 
+https://github.com/NureValterAnna/apz-pzpi-21-5-valter-anna
+Посилання на відео: 
+https://www.youtube.com/watch?v=rdNgH-mo12g
+
+ДОДАТОК А
+
+Таблиця 1 – Специфікація REST API
+Рівень доступу	Посилання на ендпоінт	HTTP-метод	Призначення
+everybody	api/account/register	POST	Реєстрація користувача
+everybody	/api/account/login	POST	Авторизація
+admin	user/export	GET	Створення та експорт користувачів
+admin	user/import	PUT	Імпорт користувачів
+admin	api/user/{id}	DELETE	Видалення користувача за id
+admin	api/user/change-role	POST	Зміна ролі користувача
+admin	api/user	GET	Отримання усіх користувачів
+admin	api/user/{id}	GET	Отримання користувача за його id
+admin	api/dispenser	POST	Додавання дозуючого пристрою
+admin	api/dispenser/{id}	DELETE	Видалення дозуючого пристрою за id
+admin	api/dispenser	PUT	Зміна місцезнаходження дозуючого пристрою
+admin	api/dispenser	GET	Отримання усіх дозуючих пристроїв
+doctor	api/medicine	POST	Додавання медикаменту
+doctor	api/medicine/{id}	DELETE	Видалення медикаменту за id
+doctor	api/medicine	GET	Отримання усіх медикаментів
+doctor	api/prescription	POST	Створення призначення медикаменту для користувача
+doctor	api/prescription	PUT	Редагування дози чи частоти прийому у призначенні
+doctor	api/prescription/{id}	DELETE	Видалення призначення
+everybody	api/prescription	GET	Отримання призначення авторизованим користувачем
+admin	api/stock	POST	Додавання медикаменту до дозуючого пристрою
+admin	api/stock /{id}	DELETE	Видалення медикаменту з дозуючого пристрою
+patient	api/medicineintake	POST	Отримання медикаменту з дозуючого пристрою за обраним призначенням
+admin	api/arduino/update-temperature	PUT	Оновлення температури дозуючого пристрою з IoT
+doctor	api/prescription/{id}/medicine-intake-information	GET	Отримання статистики з прийому пацієнтом медикаментів, а саме кількість прийнятих та пропущених доз медичного засобу
+patient	api/prescription/{id}/percentage-of-medicine-taken	GET	Отримання прогресу прийому медичного засобу за призначенням у процентах
+
+ДОДАТОК Б
+
+Код репозиторію дозуючих пристроїв:
+1. using Application.Dispensers.Commands.CreateDispenser;
+ 2. using Application.Dispensers.Commands.DeleteDispenser;
+ 3. using Application.Dispensers.Commands.UpdateDispenser;
+ 4. using Application.Dispensers.Commands.UpdateDispenserTempereture;
+ 5. using Application.Dispensers.Queries.GetDispensers;
+ 6. using Application.Interfaces;
+ 7. using Application.MedicineStocks.Commands.UpdateMedicineStock;
+ 8. using AutoMapper;
+ 9. using Domain.Entities;
+10. using Domain.Enums;
+11. using Domain.Exceptions;
+12. using Infrastructure.Data;
+13. using Infrastructure.Hubs;
+14. using Microsoft.AspNetCore.Http.HttpResults;
+15. using Microsoft.AspNetCore.SignalR;
+16. using Microsoft.EntityFrameworkCore;
+17. 
+18. namespace Infrastructure.Repositories;
+19. 
+20. public class DispenserRipository : Repository<Dispenser>, IDispenserRepository
+21. {
+22.     private readonly IMapper _mapper;
+23. 
+24.     private readonly IUnitOfWork _unitOfWork;
+25. 
+26.     private readonly IHubContext<NotificationHub, INotificationHub> _notificationHub;
+27. 
+28.     private const double THRESHOLD_TEMPERATURE = 26;
+29. 
+30.     public DispenserRipository(AppDbContext context, IMapper mapper, IUnitOfWork unitOfWork, IHubContext<NotificationHub, INotificationHub> notificationHub) : base(context)
+31.     {
+32.         _unitOfWork = unitOfWork;
+33.         _mapper = mapper;
+34.         _notificationHub = notificationHub;
+35.     }
+36. 
+37.     public async Task<int> CreateDispenser(CreateDispenserCommand request, CancellationToken cancellationToken)
+38.     {
+39.         var dispenser = await _context.Dispensers.FirstOrDefaultAsync(x => x.DispensorName == request.DispensorName && x.Location == request.Location);
+40.         if (dispenser is not null)
+41.         {
+42.             throw new DispenserAlreadyExistsException();
+43.         }
+44.         var newDispenser = _mapper.Map<Dispenser>(request);
+45.         await base.Create(newDispenser);
+46.         await _unitOfWork.SaveChanges(cancellationToken);
+47.         return newDispenser.Id;
+48.     }
+49. 
+50.     public async Task<int> DeleteDispenser(DeleteDispenserCommand request, CancellationToken cancellationToken)
+51.     {
+52.         var removedDispenser = await _context.Dispensers.FirstOrDefaultAsync(x => x.Id == request.Id);
+53.         if (removedDispenser is null)
+54.         {
+55.             throw new DispenserNotFoundException();
+56.         }
+57.         await base.Delete(removedDispenser);
+58.         return removedDispenser.Id;
+59.     }
+60. 
+61.     public async Task<List<Dispenser>> GetAllAsync(GetDispensersQuery request, CancellationToken cancellationToken)
+62.     {
+63.         var dispensers = await base.GetAllAsync(cancellationToken);
+64. 
+65.         if (request.TemperatureUnit == "F")
+66.         {
+67.             foreach (var dispenser in dispensers)
+68.             {
+69.                 dispenser.StorageTemperature = ConvertToFahrenheit(dispenser.StorageTemperature);
+70.             }
+71.         }
+72. 
+73.         return dispensers;
+74.     }
+75. 
+76.     private double ConvertToFahrenheit(double celsiusTemperature)
+77.     {
+78.         return celsiusTemperature * 9 / 5 + 32;
+79.     }
+80. 
+81.     public async Task UpdateLocation(UpdateDispenserLocationCommand request, CancellationToken cancellationToken)
+82.     {
+83.         var dispenser = await _context.Dispensers.FirstOrDefaultAsync(x => x.Id == request.Id);
+84.         if (dispenser is null)
+85.         {
+86.             throw new DispenserNotFoundException();
+87.         }
+88.         else
+89.         {
+90.             dispenser.Location = request.Location;
+91.             await base.Update(dispenser, cancellationToken);
+92.         }
+93.     }
+94. 
+95.     public async Task UpdateTemperature(UpdateDispenserTemperetureCommand request, CancellationToken cancellationToken)
+96.     {
+97.         var dispenser = await _context.Dispensers.FirstOrDefaultAsync(x => x.Id == request.Id);
+98.         if (dispenser is null)
+99.         {
+100.            throw new DispenserNotFoundException();
+101.        }
+102.        else
+103.        {
+104.            dispenser.StorageTemperature = request.StorageTemperature;
+105.            await base.Update(dispenser, cancellationToken);
+106. 
+107.            if (request.StorageTemperature > THRESHOLD_TEMPERATURE)
+108.            {
+109.                await _notificationHub.Clients.All.SendNotification("Temperature exceeded!");
+110.            }
+111.        }
+112.    }
+113.}
+
+ДОДАТОК В
+
+	Код хендлера команди створення дозуючого пристрою:
+1. using Application.Interfaces;
+ 2. using AutoMapper;
+ 3. using Domain.Entities;
+ 4. using MediatR;
+ 5. 
+ 6. namespace Application.Dispensers.Commands.CreateDispenser
+ 7. {
+ 8.     public class CreateDispenserCommandHandler : IRequestHandler<CreateDispenserCommand, int>
+ 9.     {
+10.         private readonly IDispenserRepository _dispenserRipository;
+11.         private readonly IMapper _mapper;
+12. 
+13.         public CreateDispenserCommandHandler(IDispenserRepository dispenserRipository, IMapper mapper)
+14.         {
+15.             _dispenserRipository = dispenserRipository;
+16.             _mapper = mapper;
+17.         }
+18. 
+19.         public async Task<int> Handle(CreateDispenserCommand request, CancellationToken cancellationToken)
+20.         {
+21.             var newDispenserId = await _dispenserRipository.CreateDispenser(request, cancellationToken);
+22.             return newDispenserId;
+23.         }
+24.     }
+25. }
+	Код хендлера запиту отримання всіх дозуючих пристроїв:
+1. using Application.Interfaces;
+ 2. using Application.Users.Queries.GetUser;
+ 3. using AutoMapper;
+ 4. using MediatR;
+ 5. 
+ 6. namespace Application.Dispensers.Queries.GetDispensers
+ 7. {
+ 8.     public class GetDispensersQueryHandler : IRequestHandler<GetDispensersQuery, List<DispenserResponse>>
+ 9.     {
+10.         private readonly IDispenserRepository _dispenserRepository;
+11.         private readonly IMapper _mapper;
+12. 
+13.         public GetDispensersQueryHandler(IDispenserRepository dispenserRepository, IMapper mapper)
+14.         {
+15.             _dispenserRepository = dispenserRepository;
+16.             _mapper = mapper;
+17.         }
+18. 
+19.         public async Task<List<DispenserResponse>> Handle(GetDispensersQuery request, CancellationToken cancellationToken)
+20.         {
+21.             var dispensers = await _dispenserRepository.GetAllAsync(request, cancellationToken);
+22.             return _mapper.Map<List<DispenserResponse>>(dispensers);
+23.         }
+24.     }
+25. }
+
+ДОДАТОК Г
+
+Код класу  ExceptionMiddleware:
+1. using System.Net;
+ 2. using System.Text.Json;
+ 3. using Domain.Exceptions;
+ 4. 
+ 5. namespace Presentation.Middleware
+ 6. {
+ 7.     public class ExceptionMiddleware
+ 8.     {
+ 9.         private readonly RequestDelegate _next;
+10.         private readonly ILogger<ExceptionMiddleware> _logger;
+11.         private readonly IHostEnvironment _env;
+12.         
+13.         public ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddleware> logger, IHostEnvironment env)
+14.         {
+15.             _env = env;
+16.             _logger = logger;
+17.             _next = next;
+18.         }
+19. 
+20.         public async Task InvokeAsync(HttpContext context)
+21.         {
+22.             try
+23.             {
+24.                 await _next(context);
+25.             }
+26.             catch (Exception ex)
+27.             {
+28.                 _logger.LogError(ex, ex.Message);
+29.                 context.Response.ContentType = "application/json";
+30.                 context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+31. 
+32.                 var responce = _env.IsDevelopment()
+33.                     ? new ApiException(context.Response.StatusCode, ex.Message, ex.StackTrace?.ToString())
+34.                     : new ApiException(context.Response.StatusCode, ex.Message, "Internal server error");
+35. 
+36.                 var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+37.                 var json = JsonSerializer.Serialize(responce, options);
+38.                 await context.Response.WriteAsync(json);
+39. 
+40.             }
+41.         }
+42.     }
+43. }
