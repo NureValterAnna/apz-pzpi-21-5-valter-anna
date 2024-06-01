@@ -1,0 +1,308 @@
+1 ОПИС ПРИЙНЯТИХ ІНЖЕНЕРНИХ РІШЕНЬ ТА ВЕБ-КОМПОНЕНТІВ
+
+Для клієнтської частини проекту було використано технологію Angular. Використано TypeScript для розширення можливостей JavaScript та забезпечення сильного типізованого середовища. 
+Angular дозволяє розділити функціонал додатка на окремі модулі для кращої організації та підтримки коду. У проекті були створені додаткові модулі для різних частин: авторизації та реєстрації, функціоналу адміністратора, функціоналу лікаря та функціоналу пацієнта. Сервіси використовувалися для обробки бізнес-логіки та роботи з віддаленими джерелами даних. Вони дозволяють винести загальні функції та методи в окремі компоненти, що сприяє покращенню модульності та повторному використанню коду. Інтерсептори та гуарди використовуються для обробки та контролю HTTP-запитів у системі. Вони дозволяють втручатися у процес відправлення запитів та обробки відповідей, що забезпечує додатковий контроль та безпеку додатка.Компоненти системи відображені на діаграмі компонентів Angular (додаток А), і основний компонент проекту AppComponent керує відображенням.
+Система реалізує взаємодію з трьома видами користувачів: пацієнтами, лікарями та адміністраторами. Повний функціонал, доступний для кожного з цих типів користувачів, детально описано на діаграмі прецедентів (додаток Б). 
+У додатку В знаходиться діаграма діяльності. У цій діаграмі зображені переходи всередині системи, дані, що вводять користувачі, а також результати їх дій.
+
+2 РЕАЛІЗАЦІЯ ВЕБ-ЧАСТИНИ СИСТЕМИ
+
+2.1 Авторизація та управління доступом користувачів
+Неавторизований користувач потрапляє на сторінку авторизації, де має можливість зареєструватися або авторизуватися:
+Рисунок 1 – Сторінка авторизації
+Рисунок 2 – Сторінка реєстрації
+Цей компонент реалізує авторизацію за допомогою відповідного сервісу –account.service.ts (додаток Г). 
+Після успішної авторизації, сторінка, на яку потрапляє користувач залежить від ролі користувача. Кожен з трьох видів користувачів має різний інтерфейс та різні доступні функції. При цьому користувач одного виду не має доступ до функцій для користувача іншого виду. Це обмеження реалізується за допомогою такого інструменту, як Route Guards, що дозволяють обмежити доступ до маршрутів на основі певної умови, наприклад, лише авторизовані користувачі з певним набором прав можуть переглядати сторінку. У додатку реалізовано три види Route Guards: authGuard, adminGuard, doctorGuard, що перевіряють чи авторизован користувач та надають доступ до сторінок за роллю. authGuard наведено у додатку Д.
+Для перехоплення HTTP-запитів у Angular додатку з метою автоматичного додавання JWT (JSON Web Token) до заголовків запитів використовується JwtInterceptor (додаток Е). Це забезпечує автентифікацію та авторизацію користувачів під час взаємодії з сервером.
+Рисунок 3 – Початкова сторінка для адміністратора
+Рисунок 4 – Початкова сторінка для лікаря
+Рисунок 5 – Початкова сторінка для пацієнта
+2.2  Обробка помилок
+У додатку клас ErrorInterceptor використовується для обробки HTTP-помилок у Angular додатку. Інтерцептор перехоплює HTTP-запити і відповіді, та обробляє помилки, що виникають під час виконання запитів. Це дозволяє централізовано обробляти помилки.
+Інтерцептор виконує обробку різних статусів помилок: 400 Bad Request, 
+401 Unauthorized, 404 Not Found, Internal Server Error, інші помилки. При винекненні будь-якої помилки користувач може побачити її зміст на екрані.
+Рисунок 6 – Помилка при введенні хибного паролю
+Код класу ErrorInterceptor:
+1. import { Injectable } from '@angular/core';
+ 2. import {
+ 3.   HttpRequest,
+ 4.   HttpHandler,
+ 5.   HttpEvent,
+ 6.   HttpInterceptor,
+ 7.   HttpErrorResponse
+ 8. } from '@angular/common/http';
+ 9. import { Observable, catchError } from 'rxjs';
+10. import { Router } from '@angular/router';
+11. import { ToastrService } from 'ngx-toastr';
+12. 
+13. @Injectable()
+14. export class ErrorInterceptor implements HttpInterceptor {
+15. 
+16.   constructor(private router: Router, private toastr: ToastrService) {}
+17. 
+18.   intercept(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
+19.     return next.handle(request).pipe(
+20.       catchError((error: HttpErrorResponse) => {
+21.         if(error){
+22. 
+23.           switch(error.status){
+24.             case 400:
+25.               if(error.error.errors){
+26.                 const modelStatusErrors = [];
+27.                 for(const key in error.error.errors){
+28.                   if(error.error.errors[key]){
+29.                     modelStatusErrors.push(error.error.errors[key])
+30.                   }
+31.                 }
+32.                 throw modelStatusErrors.flat();
+33.               }
+34.               else{
+35.                 this.toastr.error(error.error, error.status.toString())
+36.               }
+37.               break;
+38.             case 401:
+39.               this.toastr.error('Unauthorised', error.status.toString());
+40.               break;
+41.             case 404:
+42.               this.router.navigateByUrl('/not-found');
+43.               break;
+44.             case 500:
+45.               this.toastr.error(error.error.message);
+46.               break;
+47.             default:
+48.               this.toastr.error('Something unexpected');
+49.               console.log(error);
+50.           }
+51.         }
+52.         throw error;
+53.       })
+54.     )
+55.   }
+56. }
+2.3 Можливість адміністрування системи	
+Можливість адміністрування реалізована для користувача з роллю адміністратора. Він має доступ до сторінок адміністрування дозуючих пристроїв, медичних засобів, користувачів та зберігання медичних засобів у дозуючих пристроях. На цих сторінках адміністратор має доступ до таких функцій, як: додавання нового запису, видалення існуючого запису чи його зміна.
+Рисунок 7 – Сторінка адміністрування дозуючих пристроїв 
+Рисунок 8 – Сторінка адміністрування користувачів  
+Рисунок 9 – Сторінка адміністрування медичних засобів
+Рисунок 10 – Сторінка адміністрування зберігання медичних засобів у дозуючих пристроях   
+Для додавання нового запису чи редагування існуючого адміністратору надаються діалогові вікна для введення даних.
+Рисунок 11 – Створення нового дозуючого пристрою
+Рисунок 12 – Зміна ролі користувача
+Для створення бекапу даних є можливість збереження користувачів у файл з розширенням .xlsx та завантаження користувачів з такого файлу у базу даних. Для цього на сторінці адміністрування користувачів можна побачити відповідні кнопки.
+Рисунок 13 – Можливість імпорту та експорту користувачів 
+2.4 Інтернаціоналізація
+Інтернаціоналізація у системі проявляється у забезпеченні підтримки різних одиниць виміру температури для користувачів з різних країн та регіонів. Використання двох одиниць виміру, таких як Celsius (C) та Fahrenheit (F), дозволяє користувачам обирати те, що є для них звичайним та зрозумілим. 
+У нашому випадку, інтернаціоналізація охоплює можливість вибору одиниці виміру температури у дозуючому пристрої, що дозволяє контролювати температуру зберігання медичних засобів, через чекбокс. 
+Рисунок 14 – Температура представлена у градусах по Цельсію
+Рисунок 15 – Температура представлена у градусах по Фаренгейту
+2.5 Бізнес логіка
+Бізнес логіка додатка розподіляється на бізнес логіку для лікарів та пацієнтів. 
+Лікарі мають можливість передивлятися сторінки пацієнтів, де зазначена основна інформація про пацієнта та наведено список призначень, що вже виписані пацієнту.
+Рисунок 16 – Сторінка з інформацією про пацієнта
+На цій же сторінці лікар має можливість додати нове призначення, до списку призначень пацієнта.
+Рисунок 17 – Створення нового призначення для пацієнта
+Лікар також може отримати більш розгорнуту інформацію про процес отримання пацієнтом ліків, а сама кількість прийнятих та пропущених доз. 
+Рисунок 18 – Інформація про прийом ліків пацієнтом
+Пацієнти при авторизації отримують перелік своїх призначень з індикатором процесу, що у відсотках показує прогрес прийому ліків за призначенням.
+Рисунок 19 – Перелік призначень пацієнта
+Крім того, пацієнти можуть отримувати перелік медичних засобів, які отримують на даний момент з метою ознайомлення з їх можливими протипоказаннями та побічними ефектами.
+Рисунок 20 – Перелік медичних засобів пацієнта
+2.6 Локалізація
+Цей пункт передбачає використання модулю TranslateModule для забезпечення локалізації ресурсів у відповідній мові для користувача. TranslateModule дозволяє легко перекладати текстові рядки у програмі на різні мови за допомогою конфігурації. Після включення цього модулю, рядки, які потребують локалізації, можуть бути легко ідентифіковані та перекладені. Це забезпечує зручне та ефективне використання програми користувачами з різних культурних та мовних середовищ.
+Рисунок 21 – Англійська версія додатку
+Рисунок 22 – Українська версія додатку
+2.7 Облік часу
+У проекті було вирішено обробляти час на стороні клієнта. Оскільки дані часу зберігаються на сервері у форматі UTC, на клієнтському застосунку використовується MomentModule для обчислення локального часу користувача. Це дозволяє відображати час відповідно до місцевого часового поясу користувача, забезпечуючи при цьому правильне відображення дат та часу без плутанини через різницю у часових поясах.
+
+ВИСНОВКИ
+
+Для цієї лабораторної роботи я розробила клієнтську / front-end частину проекту, створила діаграми компонентів (Component Diagram), прецедентів (Use Case Diagram), станів (State Diagram) та діаграму діяльності (Activity Diagram). Протестувала працездатність створеного проекту.
+Посилання на репозиторій проекту: https://github.com/NureValterAnna/apz-pzpi-21-5-valter-anna 
+Посилання на відео: https://youtu.be/Ietfhx3ZwHI
+
+ДОДАТОК А
+ 
+Рисунок 23 – Діаграма компонентів
+
+ДОДАТОК Б
+ 
+Рисунок 24 – Діаграма прецедентів
+
+ДОДАТОК В
+
+Рисунок 25 – Діаграма діяльності
+
+ДОДАТОК Г
+
+Код файлу AccountService:
+1. import { Injectable } from '@angular/core';
+ 2. import { Router } from '@angular/router';
+ 3. import { HttpClient } from '@angular/common/http';
+ 4. import { User } from '../_models/user';
+ 5. import { BehaviorSubject, Observable, map } from 'rxjs';
+ 6. import { environment } from 'src/environments/environment.development';
+ 7. 
+ 8. @Injectable({
+ 9.   providedIn: 'root'
+10. })
+11. export class AccountService {
+12.   private userSubject: BehaviorSubject<User | null>;
+13.   public user: Observable<User | null>;
+14. 
+15.   constructor(private router: Router, private http: HttpClient) { 
+16.     // Initialize the userSubject with the user from localStorage (if available)
+17.     this.userSubject = new BehaviorSubject(JSON.parse(localStorage.getItem('user')!));
+18.     this.user = this.userSubject.asObservable();
+19.   }
+20. 
+21.   // Getter to access the current user value
+22.   public get userValue() {
+23.     return this.userSubject.value;
+24.   }
+25. 
+26.   /**
+27.    * Logs in the user by making a POST request to the API.
+28.    * @param email - The user's email address.
+29.    * @param password - The user's password.
+30.    * @returns An Observable containing the user data.
+31.    */
+32.   login(email: string, password: string) {
+33.     return this.http.post<any>(`${environment.apiUrl}/api/account/login`, { email, password })
+34.       .pipe(
+35.         map(user => {
+36.           // Store user details in localStorage and update the userSubject
+37.           localStorage.setItem('user', JSON.stringify(user));
+38.           this.userSubject.next(user);
+39.           return user;
+40.         })
+41.       );
+42.   }
+43. 
+44.   /**
+45.    * Registers a new user by making a POST request to the API.
+46.    * @param name - The user's first name.
+47.    * @param surname - The user's last name.
+48.    * @param age - The user's age.
+49.    * @param email - The user's email address.
+50.    * @param password - The user's password.
+51.    * @returns An Observable containing the user data.
+52.    */
+53.   register(name: string, surname: string, age: number, email: string, password: string) {
+54.     return this.http.post<any>(`${environment.apiUrl}/api/account/register`, { name, surname, age, email, password })
+55.       .pipe(
+56.         map(user => {
+57.           // Store user details in localStorage and update the userSubject
+58.           localStorage.setItem('user', JSON.stringify(user));
+59.           this.userSubject.next(user);
+60.           return user;
+61.         })
+62.       );
+63.   }
+64. 
+65.   /**
+66.    * Logs out the user by removing the user data from localStorage and resetting the userSubject.
+67.    * Also navigates the user to the login page.
+68.    */
+69.   logout() {
+70.     localStorage.removeItem('user');
+71.     this.userSubject.next(null);
+72.     this.router.navigate(['/account/login']);
+73.   }
+74. 
+75.   /**
+76.    * Gets the role of the currently logged-in user.
+77.    * @returns The user's role if available, otherwise undefined.
+78.    */
+79.   getRole() {
+80.     const userString = localStorage.getItem('user');
+81.     if (userString) {
+82.       const user = JSON.parse(userString);
+83.       return user.Role;
+84.     }
+85.   }
+86. 
+87.   /**
+88.    * Gets the name of the currently logged-in user.
+89.    * @returns The user's name if available, otherwise undefined.
+90.    */
+91.   getName() {
+92.     const userString = localStorage.getItem('user');
+93.     if (userString) {
+94.       const user = JSON.parse(userString);
+95.       return user.Name;
+96.     }
+97.   }
+98. }
+
+ДОДАТОК Д
+
+Код файлу authGuard:
+1. import { inject } from '@angular/core';
+ 2. import { CanActivateFn } from '@angular/router';
+ 3. import { AccountService } from '../_services/account.service';
+ 4. import { ToastrService } from 'ngx-toastr';
+ 5. import { map } from 'rxjs';
+ 6. 
+ 7. export const authGuard: CanActivateFn = (route, state) => {
+ 8.   const accountService = inject(AccountService);
+ 9.   const toastr = inject(ToastrService);
+10. 
+11.   return accountService.user.pipe(
+12.     map(user => {
+13.       if(user) return true;
+14.       else {
+15.         toastr.error('No access!');
+16.         return false;
+17.       }
+18.     })
+19.   )
+20. };
+
+ДОДАТОК Е
+
+Код файлу JwtInterceptor:
+1. import { Injectable } from '@angular/core';
+ 2. import {
+ 3.   HttpRequest,
+ 4.   HttpHandler,
+ 5.   HttpEvent,
+ 6.   HttpInterceptor
+ 7. } from '@angular/common/http';
+ 8. import { Observable } from 'rxjs';
+ 9. 
+10. @Injectable()
+11. export class JwtInterceptor implements HttpInterceptor {
+12. 
+13.   constructor() {}
+14. 
+15.   intercept(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
+16.     const user = localStorage.getItem('user');
+17.     let token = null;
+18. 
+19.     if (user) {
+20.       try {
+21.         const userObj = JSON.parse(user);
+22.         token = userObj?.Token;
+23.       } catch (error) {
+24.         console.error('Error parsing user from localStorage', error);
+25.       }
+26.     }
+27.     
+28.     if (token) {
+29.       request = request.clone({
+30.         setHeaders: {
+31.           Authorization: `Bearer ${token}`
+32.         }
+33.       });
+34.     }
+35.     return next.handle(request);
+36.   }
+37. }
+
+
+
+
+
+
+
+
